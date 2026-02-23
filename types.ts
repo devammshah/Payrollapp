@@ -1,6 +1,7 @@
 
 export interface Employee {
   id: string;
+  uid: string;
   fullName: string;
   email: string;
   phone: string;
@@ -19,6 +20,7 @@ export interface Employee {
 
 export interface Payroll {
   id: string;
+  uid: string;
   employeeId: string;
   month: string;
   year: number;

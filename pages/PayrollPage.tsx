@@ -4,23 +4,25 @@ import { FilePlus, Calculator, Calendar, Download, AlertCircle } from 'lucide-re
 import { Employee, Payroll, NotificationType } from '../types';
 import { calculateSalary, formatCurrency } from '../utils/calculations';
 import { generatePayslipPDF } from '../utils/pdfGenerator';
+import { db, auth } from '../firebase';
+import { addDoc, collection, setDoc, doc } from 'firebase/firestore';
 
 interface PayrollPageProps {
   employees: Employee[];
   payrolls: Payroll[];
-  setPayrolls: React.Dispatch<React.SetStateAction<Payroll[]>>;
   showNotification: (msg: string, type?: NotificationType) => void;
 }
 
-const PayrollPage: React.FC<PayrollPageProps> = ({ employees, payrolls, setPayrolls, showNotification }) => {
+const PayrollPage: React.FC<PayrollPageProps> = ({ employees, payrolls, showNotification }) => {
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [month, setMonth] = useState('January');
   const [year, setYear] = useState(new Date().getFullYear());
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const years = [2023, 2024, 2025];
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     const emp = employees.find(e => e.id === selectedEmpId);
     if (!emp) {
       showNotification('Please select an employee first.', 'error');
@@ -33,10 +35,30 @@ const PayrollPage: React.FC<PayrollPageProps> = ({ employees, payrolls, setPayro
       return;
     }
 
+    setIsProcessing(true);
     const newPayroll = calculateSalary(emp, month, year);
-    setPayrolls(prev => [...prev, newPayroll]);
     
-    showNotification(`Payroll generated for ${emp.fullName} (${month} ${year})`);
+    if (auth?.currentUser) {
+      newPayroll.uid = auth.currentUser.uid;
+    } else {
+      showNotification('You must be logged in to generate payroll', 'error');
+      setIsProcessing(false);
+      return;
+    }
+
+    try {
+      // Use setDoc to ensure ID consistency or let addDoc generate one. 
+      // Using setDoc with newPayroll.id ensures we control the ID format if defined in util, 
+      // but standard practice is let Firestore generate or use a composite key.
+      // Here newPayroll.id is `PAY-${Date.now()}` which is unique enough.
+      await setDoc(doc(db, 'payrolls', newPayroll.id), newPayroll);
+      showNotification(`Payroll generated for ${emp.fullName} (${month} ${year})`);
+    } catch (error) {
+      console.error(error);
+      showNotification('Failed to save payroll record.', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const getRecentPayrolls = () => {
@@ -123,11 +145,17 @@ const PayrollPage: React.FC<PayrollPageProps> = ({ employees, payrolls, setPayro
 
               <button 
                 onClick={handleGenerate}
-                disabled={!selectedEmpId}
+                disabled={!selectedEmpId || isProcessing}
                 className="w-full bg-slate-900 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-slate-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                <FilePlus size={20} />
-                Generate Payroll
+                {isProcessing ? (
+                  <span className="animate-pulse">Processing...</span>
+                ) : (
+                  <>
+                    <FilePlus size={20} />
+                    Generate Payroll
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { Employee, Payroll, NotificationType } from '../types';
 import { formatCurrency } from '../utils/calculations';
+import { db, auth } from '../firebase';
+import { writeBatch, doc } from 'firebase/firestore';
 
 interface DashboardProps {
   employees: Employee[];
@@ -57,16 +59,40 @@ const Dashboard: React.FC<DashboardProps> = ({ employees, payrolls, onRestore, s
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
         if (json.employees && json.payrolls) {
-          onRestore(json);
+          if (!auth?.currentUser) {
+            showNotification('You must be logged in to restore data', 'error');
+            return;
+          }
+          
+          showNotification('Restoring data to database...', 'info');
+          
+          const batch = writeBatch(db);
+          const userId = auth.currentUser.uid;
+          
+          // Add employees to batch
+          json.employees.forEach((emp: Employee) => {
+             const ref = doc(db, 'employees', emp.id);
+             batch.set(ref, { ...emp, uid: userId });
+          });
+          
+          // Add payrolls to batch
+          json.payrolls.forEach((pay: Payroll) => {
+             const ref = doc(db, 'payrolls', pay.id);
+             batch.set(ref, { ...pay, uid: userId });
+          });
+
+          await batch.commit();
+          showNotification('Database successfully restored from backup', 'success');
         } else {
           showNotification('Invalid backup file format', 'error');
         }
       } catch (err) {
-        showNotification('Error parsing backup file', 'error');
+        console.error(err);
+        showNotification('Error parsing backup file or saving to DB', 'error');
       }
     };
     reader.readAsText(file);
@@ -157,7 +183,7 @@ const Dashboard: React.FC<DashboardProps> = ({ employees, payrolls, onRestore, s
                 <Database size={20} className="text-teal-400" />
                 System Storage
               </h3>
-              <p className="text-xs text-slate-400 mb-6">Manage your local database backup to prevent data loss.</p>
+              <p className="text-xs text-slate-400 mb-6">Manage your cloud database backup to prevent data loss.</p>
               
               <div className="flex gap-2">
                 <button 

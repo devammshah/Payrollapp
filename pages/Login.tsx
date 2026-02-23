@@ -1,6 +1,8 @@
 
-import React, { useState, useEffect } from 'react';
-import { Lock, Mail, Wallet, ShieldCheck, Eye, EyeOff, Smartphone, Globe, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { Lock, Mail, Wallet, ShieldCheck, Eye, EyeOff, Smartphone, Globe, X, ArrowRight } from 'lucide-react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+import { auth, googleProvider } from '../firebase';
 
 interface LoginProps {
   onLogin: () => void;
@@ -9,6 +11,7 @@ interface LoginProps {
 type AuthStep = 'idle' | 'email-verifying' | 'oauth-popup' | 'biometric-verifying' | 'success';
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
+  const [isLoginMode, setIsLoginMode] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -16,36 +19,60 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [authStep, setAuthStep] = useState<AuthStep>('idle');
   const [oauthProvider, setOauthProvider] = useState<'google' | 'apple' | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthStep('email-verifying');
+    setError('');
     
-    setTimeout(() => {
-      if (email === 'admin@propay.com' && password === 'admin123') {
-        setAuthStep('biometric-verifying');
-        setTimeout(() => {
-          setAuthStep('success');
-          setTimeout(onLogin, 800);
-        }, 1500);
+    try {
+      if (isLoginMode) {
+        await signInWithEmailAndPassword(auth, email, password);
       } else {
-        setError('Invalid credentials. Hint: admin@propay.com / admin123');
-        setAuthStep('idle');
+        await createUserWithEmailAndPassword(auth, email, password);
       }
-    }, 1200);
-  };
-
-  const handleSocialLogin = (provider: 'google' | 'apple') => {
-    setOauthProvider(provider);
-    setAuthStep('oauth-popup');
-    
-    // Simulate real OAuth popup delay and verification
-    setTimeout(() => {
+      
       setAuthStep('biometric-verifying');
       setTimeout(() => {
         setAuthStep('success');
         setTimeout(onLogin, 800);
-      }, 1500);
-    }, 2000);
+      }, 1000);
+
+    } catch (err: any) {
+      console.error(err);
+      setAuthStep('idle');
+      if (err.code === 'auth/invalid-credential') {
+        setError('Invalid email or password.');
+      } else if (err.code === 'auth/email-already-in-use') {
+        setError('Email already registered.');
+      } else if (err.code === 'auth/weak-password') {
+        setError('Password should be at least 6 characters.');
+      } else {
+        setError(err.message || 'Authentication failed. Check your connection.');
+      }
+    }
+  };
+
+  const handleSocialLogin = async (provider: 'google' | 'apple') => {
+    setOauthProvider(provider);
+    setAuthStep('oauth-popup');
+    setError('');
+
+    try {
+      if (provider === 'google') {
+        await signInWithPopup(auth, googleProvider);
+        setAuthStep('biometric-verifying');
+        setTimeout(() => {
+          setAuthStep('success');
+          setTimeout(onLogin, 800);
+        }, 1000);
+      } else {
+        // Placeholder for Apple Auth
+        throw new Error("Apple Auth not configured in demo.");
+      }
+    } catch (err: any) {
+      setAuthStep('idle');
+      setError(err.message || 'Social authentication failed.');
+    }
   };
 
   return (
@@ -98,7 +125,6 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   <div className="space-y-2">
                     <div className="flex justify-between items-center ml-1">
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest">Password</label>
-                      <button type="button" className="text-[10px] font-bold text-teal-500 hover:text-teal-400 uppercase tracking-widest">Forgot?</button>
                     </div>
                     <div className="relative group">
                       <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-500 group-focus-within:text-teal-500 transition-colors">
@@ -126,12 +152,21 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     type="submit"
                     className="w-full bg-teal-500 hover:bg-teal-400 text-slate-950 font-black py-4 rounded-2xl transition-all shadow-xl shadow-teal-500/20 flex items-center justify-center gap-2 active:scale-[0.97] mt-2 group"
                   >
-                    SIGN INTO DASHBOARD
+                    {isLoginMode ? 'SIGN INTO DASHBOARD' : 'CREATE ACCOUNT'}
                     <div className="w-5 h-5 bg-slate-950/10 rounded-full flex items-center justify-center group-hover:translate-x-1 transition-transform">
                       <ChevronRight size={14} />
                     </div>
                   </button>
                 </form>
+
+                <div className="text-center">
+                  <button 
+                    onClick={() => { setIsLoginMode(!isLoginMode); setError(''); }}
+                    className="text-[10px] font-bold text-slate-400 hover:text-teal-400 uppercase tracking-widest transition-colors"
+                  >
+                    {isLoginMode ? 'Create new account' : 'Back to login'}
+                  </button>
+                </div>
 
                 <div className="relative flex items-center py-2">
                   <div className="flex-grow border-t border-white/5"></div>

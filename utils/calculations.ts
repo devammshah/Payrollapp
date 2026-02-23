@@ -17,6 +17,7 @@ export const calculateSalary = (employee: Employee, month: string, year: number)
 
   return {
     id: `PAY-${Date.now()}`,
+    uid: '', // Will be set by the caller
     employeeId: employee.id,
     month,
     year,

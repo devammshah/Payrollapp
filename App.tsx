@@ -22,12 +22,16 @@ import Login from './pages/Login';
 import Snackbar from './components/Snackbar';
 import LoadingScreen from './components/LoadingScreen';
 import { DashboardSkeleton, TableSkeleton } from './components/Skeleton';
+import { auth, db } from './firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 
-const STORAGE_KEY = 'propay_app_data';
+import { User as FirebaseUser } from 'firebase/auth';
 
 const App: React.FC = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [payrolls, setPayrolls] = useState<Payroll[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -37,49 +41,108 @@ const App: React.FC = () => {
     setNotification({ message, type });
   }, []);
 
+  // Auth Listener
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          setEmployees(parsed.employees || []);
-          setPayrolls(parsed.payrolls || []);
-          setIsLoggedIn(parsed.isLoggedIn || false);
-        } catch (e) {
-          console.error("Session restoration failed");
-        }
+    if (!auth) {
+      setIsInitializing(false);
+      return;
+    }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setCurrentUser(user);
+        setIsLoggedIn(true);
+      } else {
+        setCurrentUser(null);
+        setIsLoggedIn(false);
+        setEmployees([]);
+        setPayrolls([]);
       }
       setIsInitializing(false);
-    }, 2000);
-    return () => clearTimeout(timer);
+    });
+    return () => unsubscribe();
   }, []);
 
+  // Data Listeners
   useEffect(() => {
-    if (!isInitializing) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ employees, payrolls, isLoggedIn }));
-    }
-  }, [employees, payrolls, isLoggedIn, isInitializing]);
+    if (!isLoggedIn || !db || !currentUser) return;
+
+    const userId = currentUser.uid;
+
+    // Listen to Employees
+    const empQuery = query(collection(db, 'employees'), where('uid', '==', userId));
+    const empUnsub = onSnapshot(empQuery, (snapshot) => {
+      const emps = snapshot.docs.map(doc => doc.data() as Employee);
+      setEmployees(emps);
+    }, (error) => {
+      console.error("Employee fetch error:", error);
+      if (error.code === 'permission-denied') {
+        showNotification("Permission denied. Please check your account access.", 'error');
+      }
+    });
+
+    // Listen to Payrolls
+    const payrollQuery = query(collection(db, 'payrolls'), where('uid', '==', userId));
+    const payrollUnsub = onSnapshot(payrollQuery, (snapshot) => {
+      const pays = snapshot.docs.map(doc => doc.data() as Payroll);
+      setPayrolls(pays);
+    }, (error) => {
+       console.error("Payroll fetch error:", error);
+    });
+
+    return () => {
+      empUnsub();
+      payrollUnsub();
+    };
+  }, [isLoggedIn, currentUser]);
 
   const handleLogout = () => {
-    setIsLoggedIn(false);
-    showNotification('Logged out successfully', 'info');
+    if (auth) {
+      signOut(auth);
+      showNotification('Logged out successfully', 'info');
+    }
   };
 
-  const handleRestoreData = (data: { employees: Employee[], payrolls: Payroll[] }) => {
-    setEmployees(data.employees || []);
-    setPayrolls(data.payrolls || []);
-    showNotification('Database restored successfully!', 'success');
+  const handleRestoreData = () => {
+    // Legacy placeholder, now handled in Dashboard.tsx via direct DB write
+    showNotification('Use the Restore button in Dashboard to import data.', 'info');
   };
 
   if (isInitializing) {
     return <LoadingScreen />;
   }
 
+  if (!auth || !db) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-slate-50 p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center border border-slate-200">
+          <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
+            <Wallet size={32} />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-800 mb-4">Configuration Required</h1>
+          <p className="text-slate-600 mb-6 text-sm leading-relaxed">
+            Please set up your Firebase configuration in the <code>.env</code> file to continue. 
+            You need to provide your API Key, Project ID, and other details.
+          </p>
+          <div className="bg-slate-50 p-4 rounded-xl text-left text-xs font-mono text-slate-500 overflow-x-auto mb-6">
+            VITE_FIREBASE_API_KEY=...<br/>
+            VITE_FIREBASE_AUTH_DOMAIN=...<br/>
+            VITE_FIREBASE_PROJECT_ID=...
+          </div>
+          <button 
+            onClick={() => window.location.reload()}
+            className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors"
+          >
+            Reload Application
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return (
       <>
-        <Login onLogin={() => { setIsLoggedIn(true); showNotification('Authenticated successfully'); }} />
+        <Login onLogin={() => { /* Handled by auth state listener */ }} />
         {notification && (
           <Snackbar 
             message={notification.message} 
@@ -97,9 +160,7 @@ const App: React.FC = () => {
         isSidebarOpen={isSidebarOpen} 
         setIsSidebarOpen={setIsSidebarOpen} 
         employees={employees}
-        setEmployees={setEmployees}
         payrolls={payrolls}
-        setPayrolls={setPayrolls}
         handleLogout={handleLogout}
         showNotification={showNotification}
         handleRestoreData={handleRestoreData}
@@ -119,13 +180,11 @@ const AppLayout: React.FC<{
   isSidebarOpen: boolean;
   setIsSidebarOpen: (open: boolean) => void;
   employees: Employee[];
-  setEmployees: React.Dispatch<React.SetStateAction<Employee[]>>;
   payrolls: Payroll[];
-  setPayrolls: React.Dispatch<React.SetStateAction<Payroll[]>>;
   handleLogout: () => void;
   showNotification: (msg: string, type?: NotificationType) => void;
   handleRestoreData: (data: any) => void;
-}> = ({ isSidebarOpen, setIsSidebarOpen, employees, setEmployees, payrolls, setPayrolls, handleLogout, showNotification, handleRestoreData }) => {
+}> = ({ isSidebarOpen, setIsSidebarOpen, employees, payrolls, handleLogout, showNotification, handleRestoreData }) => {
   const location = useLocation();
   const [isPageLoading, setIsPageLoading] = useState(false);
   
@@ -209,8 +268,8 @@ const AppLayout: React.FC<{
           ) : (
             <Routes>
               <Route path="/" element={<Dashboard employees={employees} payrolls={payrolls} onRestore={handleRestoreData} showNotification={showNotification} />} />
-              <Route path="/employees" element={<EmployeeList employees={employees} setEmployees={setEmployees} showNotification={showNotification} />} />
-              <Route path="/payroll" element={<PayrollPage employees={employees} payrolls={payrolls} setPayrolls={setPayrolls} showNotification={showNotification} />} />
+              <Route path="/employees" element={<EmployeeList employees={employees} showNotification={showNotification} />} />
+              <Route path="/payroll" element={<PayrollPage employees={employees} payrolls={payrolls} showNotification={showNotification} />} />
               <Route path="/reports" element={<Reports employees={employees} payrolls={payrolls} showNotification={showNotification} />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>

@@ -40,7 +40,7 @@ export const generatePayslipPDF = (employee: Employee, payroll: Payroll) => {
     body: employeeDetails,
     theme: 'plain',
     styles: { fontSize: 9, cellPadding: 2 },
-    columnStyles: { 0: { fontStyle: 'bold', width: 35 }, 2: { fontStyle: 'bold', width: 35 } }
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 35 }, 2: { fontStyle: 'bold', cellWidth: 35 } }
   });
   
   // Earnings & Deductions Table
